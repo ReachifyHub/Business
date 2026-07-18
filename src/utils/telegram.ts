@@ -33,4 +33,8 @@ export function parseCommand(text: string): { action: string; args?: any } {
   if (lower.includes("quora")) return { action: "quora" };
   if (lower.includes("status")) return { action: "status" };
   return { action: "unknown" };
+  // Add this line in parseCommand():
+  if (lower.includes("post to blog") || lower.includes("wordpress")) {
+  return { action: "wordpress" };
+  }
 }
