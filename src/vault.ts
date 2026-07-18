@@ -1,5 +1,5 @@
 // src/vault.ts
-import { DenoKv } from "https://deno.land/x/deno_kv@v0.3.0/mod.ts";
+// NO import for DenoKv needed — Deno.openKv() is built-in
 
 // Environment variables for GitHub repo
 const OWNER = Deno.env.get("GITHUB_VAULT_OWNER") || "your-username";
@@ -7,7 +7,7 @@ const REPO = Deno.env.get("GITHUB_VAULT_REPO") || "your-repo";
 const BRANCH = Deno.env.get("GITHUB_VAULT_BRANCH") || "main";
 const RAW_BASE = `https://raw.githubusercontent.com/${OWNER}/${REPO}/${BRANCH}`;
 
-// KV instance (global)
+// KV instance (global) — built into Deno runtime
 const kv = await Deno.openKv();
 
 // Cache TTL (15 minutes)
@@ -79,7 +79,6 @@ export async function getMyBotContext(): Promise<string> {
     "Marketing/foundations.md",
     "Marketing/core-principles.md",
     "Marketing/cold-email-structure.md",
-    // AGENT_RULES.md removed – not applicable at runtime
     "PRODUCT_ROADMAP.md",
   ];
   return getBundle("myBotContext", files);
