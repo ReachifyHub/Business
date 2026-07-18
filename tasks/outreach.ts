@@ -7,15 +7,17 @@ import { REPO_ROOT, VAULT_DIR, OUTREACH_DIR, logLearning, sendTelegram } from '.
 // Env vars – they must be set
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 if (!GEMINI_API_KEY) throw new Error('GEMINI_API_KEY not set');
-const COMPANIES_HOUSE_KEY = process.env.COMPANIES_HOUSE_API_KEY;
-if (!COMPANIES_HOUSE_KEY) throw new Error('COMPANIES_HOUSE_API_KEY not set');
 const GMAIL_REFRESH_TOKEN = process.env.GMAIL_REFRESH_TOKEN;
 const GMAIL_CLIENT_ID = process.env.GMAIL_CLIENT_ID;
 const GMAIL_CLIENT_SECRET = process.env.GMAIL_CLIENT_SECRET;
 
-const DAILY_CAP = parseInt(process.env.DAILY_EMAIL_CAP || '100', 10);
+// Optional: if you have a Google Search API key, you can enable fallback
+// const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY;
+// const GOOGLE_CX = process.env.GOOGLE_CX;
 
+const DAILY_CAP = parseInt(process.env.DAILY_EMAIL_CAP || '100', 10);
 const SENT_LOG = path.join(OUTREACH_DIR, 'sent-log.csv');
+
 const VAULT_FILES = [
   'foundations.md',
   'core-principles.md',
@@ -27,7 +29,7 @@ const VAULT_FILES = [
   'Offers/ai-automation/proof.md',
 ];
 
-// ---------- vault ----------
+// ---------- Vault ----------
 async function loadVaultContext(): Promise<string> {
   const parts: string[] = [];
   for (const f of VAULT_FILES) {
@@ -42,13 +44,12 @@ async function loadVaultContext(): Promise<string> {
   return parts.join('\n\n');
 }
 
-// ---------- sent log ----------
+// ---------- Sent log ----------
 async function loadSentLog(): Promise<Set<string>> {
   if (!existsSync(SENT_LOG)) return new Set();
   const content = await readFile(SENT_LOG, 'utf-8');
   const lines = content.split('\n').filter(line => line.trim());
   const contacted = new Set<string>();
-  // skip header
   for (let i = 1; i < lines.length; i++) {
     const cols = lines[i].split(',');
     if (cols.length >= 2) contacted.add(cols[1].trim().toLowerCase());
@@ -68,58 +69,166 @@ async function appendSentLog(businessName: string, email: string, sector: string
   }
 }
 
-// ---------- Companies House ----------
-async function searchCompanies(query: string, maxResults = 50): Promise<{name: string, address: string}[]> {
-  const url = `https://api.company-information.service.gov.uk/search/companies?q=${encodeURIComponent(query)}&items_per_page=${maxResults}`;
-  const auth = Buffer.from(`${COMPANIES_HOUSE_KEY}:`).toString('base64');
-  const resp = await fetch(url, {
-    headers: { Authorization: `Basic ${auth}` },
-  });
-  if (!resp.ok) throw new Error(await resp.text());
-  const data = await resp.json();
-  const results: {name: string, address: string}[] = [];
-  for (const item of data.items || []) {
-    if (item.company_status === 'active') {
-      results.push({
-        name: item.title?.trim() || '',
-        address: item.address_snippet || '',
-      });
-    }
-  }
-  return results;
+// ---------- Overpass API (replaces Companies House) ----------
+interface OverpassResult {
+  name: string;
+  address: string;
+  website: string | null;
 }
 
-async function findCandidateBusinesses(contacted: Set<string>, limit: number): Promise<{name: string, address: string}[]> {
-  const searchTerms = ['plumbing', 'electrician', 'locksmith', 'hair salon', 'barber', 'beauty clinic'];
-  const candidates: {name: string, address: string}[] = [];
-  for (const term of searchTerms) {
-    if (candidates.length >= limit) break;
-    const before = candidates.length;
+async function searchOverpass(sectorTags: string[], bbox: string): Promise<OverpassResult[]> {
+  // Build a query that looks for nodes/ways with any of the given tags AND a website tag
+  const tagFilters = sectorTags.map(tag => `["${tag}"]`).join('');
+  const query = `
+    [out:json][timeout:60];
+    (
+      node${tagFilters}["website"]({{bbox}});
+      way${tagFilters}["website"]({{bbox}});
+    );
+    out body;
+  `;
+  // Replace {{bbox}} with actual coordinates
+  const finalQuery = query.replace('{{bbox}}', bbox);
+  const url = `https://overpass-api.de/api/interpreter?data=${encodeURIComponent(finalQuery)}`;
+
+  console.log(`Overpass query: ${url}`);
+  const resp = await fetch(url, { timeout: 60000 });
+  if (!resp.ok) throw new Error(`Overpass error: ${await resp.text()}`);
+
+  const data = await resp.json();
+  const results: OverpassResult[] = [];
+
+  for (const element of data.elements || []) {
+    const tags = element.tags || {};
+    const name = tags.name || '';
+    // Build address from available fields
+    const addressParts = [
+      tags['addr:street'],
+      tags['addr:city'],
+      tags['addr:postcode'],
+      tags['addr:county'],
+    ].filter(Boolean);
+    const address = addressParts.join(', ') || 'United Kingdom';
+    const website = tags.website || null;
+
+    if (name && website) {
+      results.push({ name, address, website });
+    }
+  }
+
+  // Dedup by name
+  const seen = new Set<string>();
+  const unique = results.filter(r => {
+    const key = r.name.toLowerCase();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+
+  return unique;
+}
+
+async function findCandidateBusinesses(contacted: Set<string>, limit: number): Promise<OverpassResult[]> {
+  // Define sector tags (OpenStreetMap keys) for each target industry
+  const sectorMap = [
+    { tags: ['shop=plumber', 'craft=plumber'], label: 'plumbing' },
+    { tags: ['shop=electrician', 'craft=electrician'], label: 'electrician' },
+    { tags: ['shop=locksmith'], label: 'locksmith' },
+    { tags: ['shop=hairdresser', 'amenity=hair_care'], label: 'hair salon' },
+    { tags: ['shop=barber'], label: 'barber' },
+    { tags: ['shop=beauty', 'amenity=beauty_shop'], label: 'beauty clinic' },
+  ];
+
+  // UK bounding box (rough)
+  const bbox = '49.9,-10.0,60.0,3.0';
+
+  const allCandidates: OverpassResult[] = [];
+
+  for (const sector of sectorMap) {
+    if (allCandidates.length >= limit) break;
+    console.log(`Querying Overpass for: ${sector.label}`);
     try {
-      const companies = await searchCompanies(term, 30);
-      for (const company of companies) {
-        if (!contacted.has(company.name.toLowerCase())) {
-          candidates.push(company);
-          if (candidates.length >= limit) break;
+      const results = await searchOverpass(sector.tags, bbox);
+      const filtered = results.filter(r => !contacted.has(r.name.toLowerCase()));
+      allCandidates.push(...filtered);
+      console.log(`  Found ${filtered.length} new candidates for ${sector.label}`);
+    } catch (e: any) {
+      console.error(`  Overpass error for ${sector.label}:`, e.message);
+      await logLearning(`Overpass failed for ${sector.label}: ${e.message}`);
+    }
+  }
+
+  // Shuffle to avoid always hitting the same sectors first
+  const shuffled = allCandidates.sort(() => Math.random() - 0.5);
+  return shuffled.slice(0, limit);
+}
+
+// ---------- Website email scraper ----------
+async function scrapeEmailFromWebsite(url: string): Promise<string | null> {
+  try {
+    // Clean URL
+    if (!url.startsWith('http')) url = `https://${url}`;
+
+    // Fetch with a timeout and user-agent
+    const resp = await fetch(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+      },
+      timeout: 15000, // 15 seconds
+    });
+    if (!resp.ok) return null;
+    const html = await resp.text();
+
+    // Email regex – matches mailto: links and plain text emails
+    const emailRegex = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g;
+
+    // 1. Find all emails in the HTML
+    const allMatches = html.match(emailRegex) || [];
+
+    // 2. Filter out common false positives (e.g., example.com, placeholder, image src)
+    const blockedDomains = ['example.com', 'test.com', 'domain.com', 'yourdomain'];
+    const validEmails = allMatches.filter(email => {
+      const domain = email.split('@')[1]?.toLowerCase() || '';
+      return !blockedDomains.some(bad => domain.includes(bad)) &&
+             !domain.includes('placeholder') &&
+             !domain.includes('sample');
+    });
+
+    // 3. Prefer emails that look like contact, info, hello, or are in mailto: links
+    const preferred = validEmails.filter(e =>
+      /^(contact|info|hello|enquiries|sales|support)/i.test(e.split('@')[0])
+    );
+
+    // 4. Also check mailto: links explicitly (they're often the most accurate)
+    const mailtoRegex = /mailto:([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/gi;
+    let mailtoMatch;
+    const mailtoEmails: string[] = [];
+    while ((mailtoMatch = mailtoRegex.exec(html)) !== null) {
+      mailtoEmails.push(mailtoMatch[1]);
+    }
+    const allCandidates = [...mailtoEmails, ...preferred, ...validEmails];
+
+    // 5. Return the first unique email that passes basic validation
+    const seen = new Set<string>();
+    for (const email of allCandidates) {
+      const trimmed = email.toLowerCase().trim();
+      if (!seen.has(trimmed) && trimmed.length < 100) {
+        seen.add(trimmed);
+        // Avoid generic webmaster or nobody
+        if (!/^(webmaster|nobody|admin|root)@/i.test(trimmed)) {
+          return trimmed;
         }
       }
-    } catch (e: any) {
-      console.error(`Companies House search failed for '${term}':`, e.message);
     }
-    const added = candidates.length - before;
-    if (added === 0) {
-      await logLearning(`'${term}' search returned 0 new candidates – likely exhausted or needs a different search term`);
-    }
+
+    return null;
+  } catch (e) {
+    // Timeouts or fetch errors – just return null
+    return null;
   }
-  return candidates.slice(0, limit);
 }
 
-// TODO: replace this stub with real website scraper (priority #2)
-async function findContactEmail(businessName: string): Promise<string | null> {
-  return null;
-}
-
-// ---------- Gemini ----------
+// ---------- Gemini drafting ----------
 async function callGemini(prompt: string, maxTokens = 2000): Promise<string> {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${GEMINI_API_KEY}`;
   const payload = {
@@ -182,7 +291,7 @@ async function sendGmail(accessToken: string, toEmail: string, subject: string, 
   if (!resp.ok) throw new Error(await resp.text());
 }
 
-// ---------- main ----------
+// ---------- Main ----------
 async function main() {
   console.log('Loading vault context...');
   const vaultContext = await loadVaultContext();
@@ -191,24 +300,38 @@ async function main() {
   const contacted = await loadSentLog();
   console.log(`  ${contacted.size} businesses already contacted historically.`);
 
-  console.log('Finding candidate businesses via Companies House...');
+  console.log('Finding candidate businesses via Overpass...');
   const candidates = await findCandidateBusinesses(contacted, DAILY_CAP);
   console.log(`  Found ${candidates.length} new candidates.`);
 
   let sentCount = 0;
   const sentNames: string[] = [];
   let skippedNoEmail = 0;
+  let skippedNoWebsite = 0;
   const failures: string[] = [];
   let accessToken: string | null = null;
 
   for (const business of candidates) {
     if (sentCount >= DAILY_CAP) break;
-    const email = await findContactEmail(business.name);
-    if (!email) {
-      skippedNoEmail++;
+
+    // 1. Try to scrape an email from the website
+    let email: string | null = null;
+    if (business.website) {
+      console.log(`  Scraping ${business.website} for email...`);
+      email = await scrapeEmailFromWebsite(business.website);
+      if (email) {
+        console.log(`    Found email: ${email}`);
+      } else {
+        console.log(`    No email found on ${business.website}`);
+        skippedNoEmail++;
+        continue;
+      }
+    } else {
+      skippedNoWebsite++;
       continue;
     }
 
+    // 2. Draft and send
     try {
       const draft = await draftEmail(vaultContext, business);
       const parts = draft.split('\n\n');
@@ -226,13 +349,16 @@ async function main() {
       console.error(`  Failed on ${business.name}:`, e.message);
       failures.push(e.message);
     }
+
+    // Small delay to avoid rate limiting
+    await new Promise(resolve => setTimeout(resolve, 2000));
   }
 
   if (failures.length >= 2) {
     await logLearning(`${failures.length} send failures in one run — most recent error: ${failures[failures.length-1]?.slice(0,200)}`);
   }
 
-  let report = `Outreach run complete for ${new Date().toISOString().slice(0,10)}\nSent: ${sentCount}\nSkipped (no email found): ${skippedNoEmail}`;
+  let report = `Outreach run complete for ${new Date().toISOString().slice(0,10)}\nSent: ${sentCount}\nSkipped (no email found): ${skippedNoEmail}\nSkipped (no website): ${skippedNoWebsite}`;
   if (sentNames.length) {
     report += '\n\nBusinesses emailed:\n' + sentNames.map(n => `- ${n}`).join('\n');
   }
