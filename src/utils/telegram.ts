@@ -26,7 +26,9 @@ export async function sendPhoto(chatId: number, photoUrl: string, caption?: stri
 export function parseCommand(text: string): { action: string; args?: any } {
   const lower = text.toLowerCase();
   if (lower.includes("create") && lower.includes("pin")) return { action: "pinterest" };
-  if (lower.includes("post article") || lower.includes("medium")) return { action: "medium" };
+  if (lower.includes("post article") || lower.includes("post to blog") || lower.includes("wordpress")) {
+    return { action: "wordpress" };
+  }
   if (lower.includes("facebook") || lower.includes("page") || lower.includes("post to facebook")) {
     return { action: "facebook" };
   }
