@@ -5,6 +5,15 @@ import { handlePinterestDraft, handleImageUpload } from "./commands/pinterest.ts
 import { postMediumArticle } from "./commands/medium.ts";
 import { postFacebookPromo } from "./commands/facebook.ts";
 import { draftQuoraAnswers } from "./commands/quora.ts";
+import { generateAIGreeting } from "./utils/apiClients.ts";
+import { 
+  getUserMemory, 
+  updateUserMemory, 
+  getTodayActivities, 
+  getTodayScheduledPosts, 
+  getPendingDrafts,
+  trackActivity 
+} from "./utils/state.ts";
 
 const BOT_TOKEN = Deno.env.get("TELEGRAM_BOT_TOKEN")!;
 const CHAT_ID = Deno.env.get("TELEGRAM_CHAT_ID")!;
@@ -16,6 +25,7 @@ export async function handleTelegramUpdate(update: any) {
   if (!message) return;
 
   const chatId = message.chat.id;
+  const userId = message.from?.id?.toString() || "unknown";
 
   try {
     const text = message.text?.trim() || "";
@@ -27,14 +37,34 @@ export async function handleTelegramUpdate(update: any) {
       return;
     }
 
-    // ─── Greeting flow ───
+    // ─── Store user's business info ───
+    if (lowerText.startsWith("my business is")) {
+      const businessName = text.slice("my business is".length).trim();
+      await updateUserMemory(userId, { businessName });
+      await sendTelegram(chatId, `✅ Got it! Your business is "${businessName}".`);
+      return;
+    }
+
+    // ─── AI-powered greeting flow ───
     if (lowerText.includes("good morning") || lowerText.includes("hey") || lowerText.includes("hello")) {
+      const memory = await getUserMemory(userId);
+      const todayActivities = await getTodayActivities();
+      const todayPosts = await getTodayScheduledPosts();
+      const pendingDrafts = await getPendingDrafts();
       const ctx = await getMyBotContext();
-      const stats = await kv.get(["stats", "yesterday"]);
-      const reply = `👋 Hey boss! Good morning.\n\n` +
-        `Yesterday's engagement: ${stats.value || "no data yet"}.\n\n` +
-        `I've got your daily routines ready. What do you want to do today?`;
-      await sendTelegram(chatId, reply);
+
+      const greeting = await generateAIGreeting({
+        userName: message.from?.first_name || "boss",
+        businessName: memory.businessName,
+        todayActivities,
+        todayPosts,
+        pendingDrafts,
+        vaultContext: ctx,
+        timeOfDay: getTimeOfDay(),
+      });
+
+      await sendTelegram(chatId, greeting);
+      await trackActivity("greeting", { userId });
       return;
     }
 
@@ -58,19 +88,22 @@ export async function handleTelegramUpdate(update: any) {
         await sendTelegram(chatId, status);
         break;
       default:
-        await sendTelegram(chatId,
-          `I didn't understand that. Try:\n` +
-          `• "create 3 pins, 2 hours apart"\n` +
-          `• "post article about Brand DNA"\n` +
-          `• "post to facebook"\n` +
-          `• "quora drafts"\n` +
-          `• "good morning"`
-        );
+        // AI-powered fallback for unknown messages
+        const ctx = await getMyBotContext();
+        const aiReply = await generateAIFallbackReply(text, ctx);
+        await sendTelegram(chatId, aiReply);
     }
   } catch (error: any) {
     console.error("Error in handleTelegramUpdate:", error);
     await sendTelegram(chatId, `❌ Error: ${error.message || "Unknown error"}`);
   }
+}
+
+function getTimeOfDay(): string {
+  const hour = new Date().getHours();
+  if (hour < 12) return "morning";
+  if (hour < 18) return "afternoon";
+  return "evening";
 }
 
 async function getStatus() {
@@ -94,13 +127,6 @@ Deno.serve(async (req) => {
   if (url.pathname === "/" && req.method === "GET") {
     return new Response("✅ JARVIS is alive", { status: 200 });
   }
-  // Add this test route for /telegram (GET)
- if (url.pathname === "/telegram" && req.method === "GET") {
-   return new Response("✅ Telegram webhook endpoint is reachable. Send POST requests here.", { 
-     status: 200,
-     headers: { "Content-Type": "text/plain" }
-   });
-  }
   if (url.pathname === "/telegram" && req.method === "POST") {
     try {
       const update = await req.json();
@@ -110,10 +136,6 @@ Deno.serve(async (req) => {
       console.error("Webhook error:", err);
       return new Response("Internal Error", { status: 500 });
     }
-  }
-  // Add this test route
- if (url.pathname === "/test" && req.method === "GET") {
-   return new Response("Test route is working!", { status: 200 });
   }
   return new Response("Not Found", { status: 404 });
 });
