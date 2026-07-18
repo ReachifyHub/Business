@@ -217,3 +217,32 @@ export async function replyToComment(commentId: string, message: string) {
   if (!resp.ok) throw new Error(`Facebook reply error: ${await resp.text()}`);
   return resp.json();
 }
+// WordPress API client
+export async function postToWordPress(title: string, content: string) {
+  const url = Deno.env.get("WORDPRESS_URL")!;
+  const username = Deno.env.get("WORDPRESS_USERNAME")!;
+  const appPassword = Deno.env.get("WORDPRESS_APP_PASSWORD")!;
+
+  const endpoint = `${url}/wp-json/wp/v2/posts`;
+  const auth = btoa(`${username}:${appPassword}`);
+
+  const resp = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      Authorization: `Basic ${auth}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      title: title,
+      content: content, // WordPress accepts HTML and plain text
+      status: "publish", // or "draft" if you want to review first
+    }),
+  });
+
+  if (!resp.ok) {
+    const errorText = await resp.text();
+    throw new Error(`WordPress API error (${resp.status}): ${errorText}`);
+  }
+
+  return resp.json();
+}
