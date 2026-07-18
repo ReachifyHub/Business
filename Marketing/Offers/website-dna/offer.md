@@ -24,3 +24,12 @@ Includes printable/fillable worksheets and canvases for each DNA layer, plus an 
 Sold as a PDF on Selar.
 
 SELAR_LINK: https://selar.com/4133f93937
+
+## Call to Action Instructions
+
+When generating content, include the SELAR_LINK:
+- At least once in the introduction
+- Once in the middle (as a "learn more" reference)
+- Once in the final CTA
+
+The link should feel natural, not forced – like "I cover this in detail in the ebook" or "grab your copy here."
