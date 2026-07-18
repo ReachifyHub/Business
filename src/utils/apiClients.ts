@@ -46,7 +46,7 @@ export async function generateAIGreeting(params: {
   vaultContext: string;
   timeOfDay: string;
 }): Promise<string> {
-  const prompt = `You are JARVIS, a friendly and professional AI marketing assistant for ${params.userName}.
+  const prompt = `You are JimpAI, a friendly and professional AI marketing assistant for ${params.userName}.
 
 CONTEXT:
 - User's business: ${params.businessName || "not set yet"}
@@ -247,29 +247,3 @@ export async function postToWordPress(title: string, content: string) {
   return resp.json();
 }
 
-
-      // src/utils/apiClients.ts (add this at the end)
-
-// ─── AI-powered fallback for unknown messages ───
-export async function generateAIFallbackReply(userMessage: string, vaultContext: string): Promise<string> {
-  const prompt = `You are JimpAI, a professional AI marketing assistant for Boostlyte.
-
-USER SAID: "${userMessage}"
-
-VAULT CONTEXT (tone, voice, business details):
-${vaultContext.slice(0, 1500)}
-
-RULES:
-- Respond helpfully and professionally.
-- If the user is asking for help, suggest available commands: "post to blog", "create 3 pins", "post to facebook", "quora drafts", "good morning".
-- If the user is sharing something, acknowledge it and offer assistance.
-- Keep response under 150 words.
-- Match the tone from the vault — plain, specific, no hype.
-- If the user says "hi", "hey", or "hello" — greet them warmly and ask what they'd like to do today.
-- NEVER say "I don't understand" — always offer something useful.
-- Be conversational. Ask follow-up questions.
-
-OUTPUT ONLY YOUR REPLY — no extra commentary.`;
-
-  return await callGroq(prompt);
-  }
