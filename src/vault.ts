@@ -1,23 +1,34 @@
 // src/vault.ts
-// NO import for DenoKv needed — Deno.openKv() is built-in
-
-// Environment variables for GitHub repo
-const OWNER = Deno.env.get("GITHUB_VAULT_OWNER") || "your-username";
-const REPO = Deno.env.get("GITHUB_VAULT_REPO") || "your-repo";
+const OWNER = Deno.env.get("GITHUB_VAULT_OWNER") || "ReachifyHub";
+const REPO = Deno.env.get("GITHUB_VAULT_REPO") || "Business";
 const BRANCH = Deno.env.get("GITHUB_VAULT_BRANCH") || "main";
-const RAW_BASE = `https://raw.githubusercontent.com/${OWNER}/${REPO}/${BRANCH}`;
+const GITHUB_TOKEN = Deno.env.get("GITHUB_TOKEN") || "";
 
-// KV instance (global) — built into Deno runtime
+// If no token, try raw.githubusercontent.com (only works for public repos)
+const API_BASE = GITHUB_TOKEN
+  ? `https://api.github.com/repos/${OWNER}/${REPO}/contents`
+  : `https://raw.githubusercontent.com/${OWNER}/${REPO}/${BRANCH}`;
+
 const kv = await Deno.openKv();
-
-// Cache TTL (15 minutes)
 const CACHE_TTL_MS = 15 * 60 * 1000;
 
-// Helper: fetch a single file, return content or null
+// Helper: fetch a single file from GitHub API (authenticated) or raw (public)
 async function fetchFile(path: string): Promise<string | null> {
-  const url = `${RAW_BASE}/${path}`;
+  let url: string;
+  let headers: Record<string, string> = {};
+
+  if (GITHUB_TOKEN) {
+    url = `${API_BASE}/${path}?ref=${BRANCH}`;
+    headers = {
+      Authorization: `Bearer ${GITHUB_TOKEN}`,
+      Accept: "application/vnd.github.raw+json",
+    };
+  } else {
+    url = `${API_BASE}/${path}`;
+  }
+
   try {
-    const resp = await fetch(url);
+    const resp = await fetch(url, { headers });
     if (!resp.ok) {
       console.error(`[vault] Failed to fetch ${path}: ${resp.status}`);
       return null;
@@ -30,11 +41,7 @@ async function fetchFile(path: string): Promise<string | null> {
 }
 
 // Helper: get bundle from KV or fetch fresh
-async function getBundle(
-  key: string,
-  filePaths: string[]
-): Promise<string> {
-  // Check KV cache
+async function getBundle(key: string, filePaths: string[]): Promise<string> {
   const cacheEntry = await kv.get<{ content: string; timestamp: number }>([key]);
   if (cacheEntry.value) {
     const now = Date.now();
@@ -44,14 +51,12 @@ async function getBundle(
     }
   }
 
-  // Fetch all files in parallel
   console.log(`[vault] Fetching fresh bundle: ${key}`);
   const results = await Promise.all(filePaths.map(async (path) => {
     const content = await fetchFile(path);
     return { path, content };
   }));
 
-  // Filter out failures, log each missing
   const successful = results.filter(r => r.content !== null);
   const failed = results.filter(r => r.content === null);
   for (const f of failed) {
@@ -59,21 +64,15 @@ async function getBundle(
   }
 
   if (successful.length === 0) {
-    throw new Error(`[vault] Bundle "${key}" completely empty – all files failed.`);
+    throw new Error(`Bundle "${key}" completely empty – all files failed.`);
   }
 
-  // Combine with separator
   const combined = successful.map(r => r.content).join("\n\n---\n\n");
-
-  // Store in KV
   await kv.set([key], { content: combined, timestamp: Date.now() });
-
   return combined;
 }
 
-// ----- Export functions -----
-
-/** My bot's operating context – used for conversation, commands, daily routines */
+// Export functions
 export async function getMyBotContext(): Promise<string> {
   const files = [
     "Marketing/foundations.md",
@@ -84,7 +83,6 @@ export async function getMyBotContext(): Promise<string> {
   return getBundle("myBotContext", files);
 }
 
-/** Offer content for generating posts, emails, ad copy, etc. */
 export async function getOfferContext(section: "ai" | "dna"): Promise<string> {
   const base = `Marketing/Offers/${section === "ai" ? "ai-automation" : "website-dna"}`;
   const files = [
