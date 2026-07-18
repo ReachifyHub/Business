@@ -6,6 +6,7 @@ import { postMediumArticle } from "./commands/medium.ts";
 import { postFacebookPromo } from "./commands/facebook.ts";
 import { draftQuoraAnswers } from "./commands/quora.ts";
 import { generateAIGreeting } from "./utils/apiClients.ts";
+import { postToBlog } from "./commands/wordpress.ts";
 import { 
   getUserMemory, 
   updateUserMemory, 
@@ -86,6 +87,9 @@ export async function handleTelegramUpdate(update: any) {
       case "status":
         const status = await getStatus();
         await sendTelegram(chatId, status);
+        break;
+      case "wordpress":
+        await postToBlog(chatId, command);
         break;
       default:
         // AI-powered fallback for unknown messages
