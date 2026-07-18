@@ -4,57 +4,63 @@ import { sendTelegram } from "./utils/telegram.ts";
 import { postMediumArticle } from "./commands/medium.ts";
 import { replyToNewComments } from "./commands/facebook.ts";
 import { processScheduledPins } from "./commands/pinterest.ts";
-import { getYesterdayStats, setYesterdayStats } from "./utils/state.ts";
+import { getTodayActivities, getPendingDrafts, getScheduledPosts } from "./utils/state.ts";
+import { generateAIGreeting } from "./utils/apiClients.ts";
 
 const CHAT_ID = Deno.env.get("TELEGRAM_CHAT_ID")!;
 
-// ─── Daily routines ───
-async function runDailyRoutines() {
-  console.log("[cron] Starting daily routines...");
+// ─── Daily morning routine ───
+async function runMorningRoutine() {
+  console.log("[cron] Starting morning routine...");
   const ctx = await getMyBotContext();
-  const dnaVault = await getOfferContext("dna");
+  const todayActivities = await getTodayActivities();
+  const pendingDrafts = await getPendingDrafts();
+  const scheduledPosts = await getScheduledPosts();
 
-  // 1. Post a skill-based tweet (if Twitter is set up)
-  // We'll skip since Twitter is not required yet.
+  // Generate an AI-powered morning briefing
+  const greeting = await generateAIGreeting({
+    userName: "Boss",
+    businessName: "Boostlyte",
+    todayActivities,
+    todayPosts: scheduledPosts.filter(p => {
+      const date = new Date(p.scheduledTime).toISOString().slice(0, 10);
+      return date === new Date().toISOString().slice(0, 10);
+    }),
+    pendingDrafts,
+    vaultContext: ctx,
+    timeOfDay: "morning",
+  });
 
-  // 2. Post an ebook promo tweet (skip)
-
-  // 3. Post a Medium article (optional – uncomment if wanted)
-  // await postMediumArticle(CHAT_ID, { action: "daily" });
-
-  // 4. Post to Facebook Page
-  // We'll call the Facebook promo function directly – but it expects a chatId and command.
-  // We'll import and call it if needed.
-
-  // 5. Log success
-  await sendTelegram(CHAT_ID, 
-    `✅ Daily routines completed.\n` +
-    `- (Medium article optional)\n` +
-    `- Facebook/Quora/Pinterest scheduled tasks active.`
-  );
+  await sendTelegram(CHAT_ID, greeting);
 }
 
 // ─── Cron jobs ───
 
 // Morning routine (9:00 UTC)
 Deno.cron("Morning routine", "0 9 * * *", async () => {
-  await runDailyRoutines();
+  await runMorningRoutine();
 });
 
 // Afternoon check-in (13:00 UTC)
 Deno.cron("Afternoon check-in", "0 13 * * *", async () => {
-  await sendTelegram(CHAT_ID, "☀️ Afternoon update: All systems running. Need anything?");
+  const ctx = await getMyBotContext();
+  const reply = await generateAIFallbackReply(
+    "Afternoon update",
+    ctx
+  );
+  await sendTelegram(CHAT_ID, `☀️ ${reply}`);
 });
 
 // Evening summary (18:00 UTC)
 Deno.cron("Evening summary", "0 18 * * *", async () => {
-  // Gather stats (mock for now)
-  const stats = await getYesterdayStats();
+  const activities = await getTodayActivities();
+  const pendingDrafts = await getPendingDrafts();
   await sendTelegram(CHAT_ID, 
     `🌙 End of day summary:\n` +
-    `- Facebook comments replied: ${stats?.facebookReplies || 0}\n` +
-    `- Pinterest pins posted: ${stats?.pinterestPosted || 0}\n` +
-    `- Medium articles published: ${stats?.mediumPublished || 0}`
+    `- Activities today: ${activities.length}\n` +
+    `- Pending drafts: ${pendingDrafts.filter(d => d.status === "waiting_image").length}\n` +
+    `- Scheduled posts: ${(await getScheduledPosts()).length}\n\n` +
+    `Good work today! 🚀`
   );
 });
 
@@ -68,7 +74,13 @@ Deno.cron("Pinterest scheduled posts", "*/5 * * * *", async () => {
   await processScheduledPins();
 });
 
-// Optional: Quora drafts (could run daily)
-// Deno.cron("Quora drafts", "0 11 * * *", async () => {
-//   await draftQuoraAnswers(CHAT_ID, {});
-// });
+// Morning reminder for pending drafts (8:30 UTC)
+Deno.cron("Pending drafts reminder", "30 8 * * *", async () => {
+  const pendingDrafts = await getPendingDrafts();
+  const waiting = pendingDrafts.filter(d => d.status === "waiting_image");
+  if (waiting.length > 0) {
+    await sendTelegram(CHAT_ID, 
+      `📌 Reminder: You have ${waiting.length} Pinterest draft${waiting.length > 1 ? 's' : ''} waiting for images. Send them when you're ready.`
+    );
+  }
+});
