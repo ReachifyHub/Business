@@ -104,5 +104,9 @@ Deno.serve(async (req) => {
       return new Response("Internal Error", { status: 500 });
     }
   }
+  // Add this test route
+ if (url.pathname === "/test" && req.method === "GET") {
+   return new Response("Test route is working!", { status: 200 });
+  }
   return new Response("Not Found", { status: 404 });
 });
