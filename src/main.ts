@@ -7,75 +7,72 @@ import { postFacebookPromo } from "./commands/facebook.ts";
 import { draftQuoraAnswers } from "./commands/quora.ts";
 
 const BOT_TOKEN = Deno.env.get("TELEGRAM_BOT_TOKEN")!;
-const CHAT_ID = Deno.env.get("TELEGRAM_CHAT_ID")!; // used in cron
+const CHAT_ID = Deno.env.get("TELEGRAM_CHAT_ID")!;
 
-// KV for conversation state
 const kv = await Deno.openKv();
 
-// ─── Telegram webhook handler ───
 export async function handleTelegramUpdate(update: any) {
   const message = update.message;
   if (!message) return;
 
   const chatId = message.chat.id;
-  const text = message.text?.trim() || "";
-  const lowerText = text.toLowerCase();
 
-  // ─── Handle image uploads (for Pinterest) ───
-  if (message.photo) {
-    await handleImageUpload(chatId, message.photo);
-    return;
-  }
+  try {
+    const text = message.text?.trim() || "";
+    const lowerText = text.toLowerCase();
 
-  // ─── Greeting flow ───
-  if (lowerText.includes("good morning") || lowerText.includes("hey") || lowerText.includes("hello")) {
-    const ctx = await getMyBotContext();
-    // Fetch yesterday's stats from KV or external APIs
-    const stats = await kv.get(["stats", "yesterday"]);
-    const reply = `👋 Hey boss! Good morning.\n\n` +
-      `Yesterday's engagement: ${stats.value || "no data yet"}.\n\n` +
-      `I've got your daily routines ready. What do you want to do today?`;
-    await sendTelegram(chatId, reply);
-    return;
-  }
+    // ─── Handle image uploads ───
+    if (message.photo) {
+      await handleImageUpload(chatId, message.photo);
+      return;
+    }
 
-  // ─── Command router ───
-  const command = parseCommand(text);
-  switch (command.action) {
-    case "pinterest":
-      await handlePinterestDraft(chatId, command);
-      break;
+    // ─── Greeting flow ───
+    if (lowerText.includes("good morning") || lowerText.includes("hey") || lowerText.includes("hello")) {
+      const ctx = await getMyBotContext();
+      const stats = await kv.get(["stats", "yesterday"]);
+      const reply = `👋 Hey boss! Good morning.\n\n` +
+        `Yesterday's engagement: ${stats.value || "no data yet"}.\n\n` +
+        `I've got your daily routines ready. What do you want to do today?`;
+      await sendTelegram(chatId, reply);
+      return;
+    }
 
-    case "medium":
-      await postMediumArticle(chatId, command);
-      break;
-
-    case "facebook":
-      await postFacebookPromo(chatId, command);
-      break;
-
-    case "quora":
-      await draftQuoraAnswers(chatId, command);
-      break;
-
-    case "status":
-      const status = await getStatus();
-      await sendTelegram(chatId, status);
-      break;
-
-    default:
-      await sendTelegram(chatId, 
-        `I didn't understand that. Try:\n` +
-        `• "create 3 pins, 2 hours apart"\n` +
-        `• "post article about Brand DNA"\n` +
-        `• "post to facebook"\n` +
-        `• "quora drafts"\n` +
-        `• "good morning"`
-      );
+    // ─── Command router ───
+    const command = parseCommand(text);
+    switch (command.action) {
+      case "pinterest":
+        await handlePinterestDraft(chatId, command);
+        break;
+      case "medium":
+        await postMediumArticle(chatId, command);
+        break;
+      case "facebook":
+        await postFacebookPromo(chatId, command);
+        break;
+      case "quora":
+        await draftQuoraAnswers(chatId, command);
+        break;
+      case "status":
+        const status = await getStatus();
+        await sendTelegram(chatId, status);
+        break;
+      default:
+        await sendTelegram(chatId,
+          `I didn't understand that. Try:\n` +
+          `• "create 3 pins, 2 hours apart"\n` +
+          `• "post article about Brand DNA"\n` +
+          `• "post to facebook"\n` +
+          `• "quora drafts"\n` +
+          `• "good morning"`
+        );
+    }
+  } catch (error: any) {
+    console.error("Error in handleTelegramUpdate:", error);
+    await sendTelegram(chatId, `❌ Error: ${error.message || "Unknown error"}`);
   }
 }
 
-// ─── Status helper ───
 async function getStatus() {
   const scheduled = await kv.get(["scheduled_posts"]);
   const drafts = await kv.get(["pending_drafts"]);
@@ -92,26 +89,20 @@ async function getCacheAge() {
   return `${Math.round(age)} min old`;
 }
 
-// ─── Deno Deploy entry point ───
 Deno.serve(async (req) => {
   const url = new URL(req.url);
-
-  // Health check
   if (url.pathname === "/" && req.method === "GET") {
     return new Response("✅ JARVIS is alive", { status: 200 });
   }
-
-  // Telegram webhook endpoint
   if (url.pathname === "/telegram" && req.method === "POST") {
     try {
       const update = await req.json();
       await handleTelegramUpdate(update);
       return new Response("OK", { status: 200 });
     } catch (err) {
-      console.error("Error:", err);
-      return new Response("Error", { status: 500 });
+      console.error("Webhook error:", err);
+      return new Response("Internal Error", { status: 500 });
     }
   }
-
   return new Response("Not Found", { status: 404 });
 });
