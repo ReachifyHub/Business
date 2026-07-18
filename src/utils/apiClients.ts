@@ -1,5 +1,5 @@
 // src/utils/apiClients.ts
-// Gemini / Groq
+// ─── Gemini ───
 export async function callGemini(prompt: string): Promise<string> {
   const key = Deno.env.get("GEMINI_API_KEY")!;
   const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${key}`;
@@ -11,10 +11,12 @@ export async function callGemini(prompt: string): Promise<string> {
       generationConfig: { maxOutputTokens: 6000 },
     }),
   });
+  if (!resp.ok) throw new Error(`Gemini error: ${await resp.text()}`);
   const data = await resp.json();
   return data.candidates?.[0]?.content?.parts?.[0]?.text || "";
 }
 
+// ─── Groq ───
 export async function callGroq(prompt: string): Promise<string> {
   const key = Deno.env.get("GROQ_API_KEY")!;
   const resp = await fetch("https://api.groq.com/openai/v1/chat/completions", {
@@ -29,11 +31,12 @@ export async function callGroq(prompt: string): Promise<string> {
       max_tokens: 1500,
     }),
   });
+  if (!resp.ok) throw new Error(`Groq error: ${await resp.text()}`);
   const data = await resp.json();
   return data.choices[0].message.content;
 }
 
-// Pinterest
+// ─── Pinterest ───
 export async function generatePinCopy(vault: string) {
   const prompt = `Generate Pinterest pin copy from this vault:\n${vault}\n\nOutput:\nTITLE: ...\nDESCRIPTION: ...`;
   const text = await callGroq(prompt);
@@ -49,16 +52,18 @@ export async function generateImagePrompt(title: string) {
 }
 
 export async function postPin(title: string, description: string, imageFileId: string) {
-  // Get image URL from Telegram
   const token = Deno.env.get("TELEGRAM_BOT_TOKEN")!;
+  // Get image URL from Telegram
   const fileUrl = `https://api.telegram.org/bot${token}/getFile?file_id=${imageFileId}`;
   const fileResp = await fetch(fileUrl);
+  if (!fileResp.ok) throw new Error(`Telegram file error: ${await fileResp.text()}`);
   const fileData = await fileResp.json();
   const filePath = fileData.result.file_path;
   const imageUrl = `https://api.telegram.org/file/bot${token}/${filePath}`;
 
   // Download image
   const imageResp = await fetch(imageUrl);
+  if (!imageResp.ok) throw new Error(`Image download error: ${await imageResp.text()}`);
   const imageBuffer = await imageResp.arrayBuffer();
   const base64 = btoa(String.fromCharCode(...new Uint8Array(imageBuffer)));
 
@@ -82,15 +87,17 @@ export async function postPin(title: string, description: string, imageFileId: s
       },
     }),
   });
+  if (!resp.ok) throw new Error(`Pinterest error: ${await resp.text()}`);
   return resp.json();
 }
 
-// Medium
-export async function postMediumArticle(title: string, content: string, vault: string) {
+// ─── Medium ───
+export async function postMediumArticle(title: string, content: string) {
   const token = Deno.env.get("MEDIUM_INTEGRATION_TOKEN")!;
   const me = await fetch("https://api.medium.com/v1/me", {
     headers: { Authorization: `Bearer ${token}` },
   });
+  if (!me.ok) throw new Error(`Medium /me error: ${await me.text()}`);
   const meData = await me.json();
   const userId = meData.data.id;
 
@@ -107,26 +114,52 @@ export async function postMediumArticle(title: string, content: string, vault: s
       publishStatus: "public",
     }),
   });
+  if (!resp.ok) throw new Error(`Medium post error: ${await resp.text()}`);
   return resp.json();
 }
 
-// Twitter / X
-export async function postTweet(text: string) {
-  const bearerToken = Deno.env.get("TWITTER_BEARER_TOKEN")!;
-  const resp = await fetch("https://api.twitter.com/2/tweets", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${bearerToken}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ text }),
-  });
-  return resp.json();
-}
-
-// Facebook Ads
-export async function createFacebookAdDraft(headline: string, primaryText: string, imageBase64: string) {
+// ─── Facebook Page ───
+export async function postToFacebookPage(message: string, link?: string) {
   const accessToken = Deno.env.get("META_ACCESS_TOKEN")!;
-  const adAccountId = Deno.env.get("META_AD_ACCOUNT_ID")!;
-  // ... (full fb_ads.ts logic)
+  const pageId = Deno.env.get("META_PAGE_ID")!;
+  const url = `https://graph.facebook.com/v19.0/${pageId}/feed`;
+  const body: any = { message, access_token: accessToken };
+  if (link) body.link = link;
+  const resp = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!resp.ok) throw new Error(`Facebook post error: ${await resp.text()}`);
+  return resp.json();
+}
+
+export async function getPageComments(pageId: string, afterCommentId?: string | null) {
+  const accessToken = Deno.env.get("META_ACCESS_TOKEN")!;
+  let url = `https://graph.facebook.com/v19.0/${pageId}/feed?fields=comments{id,message,created_time}&access_token=${accessToken}&limit=10`;
+  if (afterCommentId) {
+    url += `&since_id=${afterCommentId}`;
+  }
+  const resp = await fetch(url);
+  if (!resp.ok) throw new Error(`Facebook comments error: ${await resp.text()}`);
+  const data = await resp.json();
+  let allComments = [];
+  for (const post of data.data || []) {
+    if (post.comments && post.comments.data) {
+      allComments = allComments.concat(post.comments.data);
+    }
+  }
+  return allComments;
+}
+
+export async function replyToComment(commentId: string, message: string) {
+  const accessToken = Deno.env.get("META_ACCESS_TOKEN")!;
+  const url = `https://graph.facebook.com/v19.0/${commentId}/comments`;
+  const resp = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ message, access_token: accessToken }),
+  });
+  if (!resp.ok) throw new Error(`Facebook reply error: ${await resp.text()}`);
+  return resp.json();
 }
