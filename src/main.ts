@@ -2,7 +2,6 @@
 import { getMyBotContext } from "./vault.ts";
 import { sendTelegram, parseCommand } from "./utils/telegram.ts";
 import { handlePinterestDraft, handleImageUpload } from "./commands/pinterest.ts";
-import { postMediumArticle } from "./commands/medium.ts";
 import { postFacebookPromo } from "./commands/facebook.ts";
 import { draftQuoraAnswers } from "./commands/quora.ts";
 import { postToBlog } from "./commands/wordpress.ts";
@@ -71,9 +70,6 @@ export async function handleTelegramUpdate(update: any) {
     switch (command.action) {
       case "pinterest":
         await handlePinterestDraft(chatId, command);
-        break;
-      case "medium":
-        await postMediumArticle(chatId, command);
         break;
       case "facebook":
         await postFacebookPromo(chatId, command);
