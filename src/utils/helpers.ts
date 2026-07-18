@@ -1,8 +1,7 @@
 // src/utils/helpers.ts
 export function parseHooks(vaultText: string) {
-  // Same as before
   const hooks = [];
-  let current = null;
+  let current: { title: string; lines: string[] } | null = null;
   for (const line of vaultText.split("\n")) {
     const match = line.match(/^#{2,3}\s+\d+\.\s+(.+)/);
     if (match) {
