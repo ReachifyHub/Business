@@ -6,6 +6,7 @@ import { postMediumArticle } from "./commands/medium.ts";
 import { postFacebookPromo } from "./commands/facebook.ts";
 import { draftQuoraAnswers } from "./commands/quora.ts";
 import { generateAIGreeting } from "./utils/apiClients.ts";
+import { generateAIFallbackReply, generateAIGreeting } from "./utils/apiClients.ts";
 import { postToBlog } from "./commands/wordpress.ts";
 import { 
   getUserMemory, 
