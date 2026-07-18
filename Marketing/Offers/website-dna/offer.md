@@ -23,4 +23,4 @@ Includes printable/fillable worksheets and canvases for each DNA layer, plus an 
 
 Sold as a PDF on Selar.
 
-SELAR_LINK: [PLACEHOLDER - update once live]
+SELAR_LINK: https://selar.com/4133f93937
