@@ -1,0 +1,46 @@
+// src/cron.ts
+import { getMyBotContext, getOfferContext } from "./vault.ts";
+import { sendTelegram } from "./utils/telegram.ts";
+import { postTweet } from "./commands/twitter.ts";
+import { postMediumArticle } from "./commands/medium.ts";
+
+const CHAT_ID = Deno.env.get("TELEGRAM_CHAT_ID")!;
+
+// ─── Daily routines ───
+async function runDailyRoutines() {
+  console.log("[cron] Starting daily routines...");
+  const ctx = await getMyBotContext();
+  const dnaVault = await getOfferContext("dna");
+
+  // 1. Post a skill-based tweet
+  await postTweet(CHAT_ID, { action: "skill", context: ctx });
+
+  // 2. Post an ebook promo tweet
+  await postTweet(CHAT_ID, { action: "promo", context: dnaVault });
+
+  // 3. Post a Medium article (if you want daily)
+  // await postMediumArticle(CHAT_ID, { action: "daily" });
+
+  // 4. Log success
+  await sendTelegram(CHAT_ID, 
+    `✅ Daily routines completed.\n` +
+    `- Posted skill tweet\n` +
+    `- Posted promo tweet\n` +
+    `- (Medium article optional)`
+  );
+}
+
+// ─── Cron triggers ───
+// Deno.cron(name, schedule, handler)
+Deno.cron("Morning routine", "0 9 * * *", async () => {
+  await runDailyRoutines();
+});
+
+Deno.cron("Afternoon check-in", "0 13 * * *", async () => {
+  await sendTelegram(CHAT_ID, "☀️ Afternoon update: All systems running. Need anything?");
+});
+
+Deno.cron("Evening summary", "0 18 * * *", async () => {
+  // Gather stats, post summary
+  await sendTelegram(CHAT_ID, "🌙 End of day summary – check your stats in the dashboard.");
+});
