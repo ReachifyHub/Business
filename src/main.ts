@@ -3,13 +3,11 @@ import { getMyBotContext, getOfferContext } from "./vault.ts";
 import { sendTelegram, parseCommand } from "./utils/telegram.ts";
 import { handlePinterestDraft, handleImageUpload } from "./commands/pinterest.ts";
 import { postMediumArticle } from "./commands/medium.ts";
-import { postTweet } from "./commands/twitter.ts";
-import { createPausedAd } from "./commands/fb_ads.ts";
+import { postFacebookPromo } from "./commands/facebook.ts";
 import { draftQuoraAnswers } from "./commands/quora.ts";
-import { runOutreach } from "./commands/outreach.ts";
 
 const BOT_TOKEN = Deno.env.get("TELEGRAM_BOT_TOKEN")!;
-const CHAT_ID = Deno.env.get("TELEGRAM_CHAT_ID")!;
+const CHAT_ID = Deno.env.get("TELEGRAM_CHAT_ID")!; // used in cron
 
 // KV for conversation state
 const kv = await Deno.openKv();
@@ -22,6 +20,12 @@ export async function handleTelegramUpdate(update: any) {
   const chatId = message.chat.id;
   const text = message.text?.trim() || "";
   const lowerText = text.toLowerCase();
+
+  // ─── Handle image uploads (for Pinterest) ───
+  if (message.photo) {
+    await handleImageUpload(chatId, message.photo);
+    return;
+  }
 
   // ─── Greeting flow ───
   if (lowerText.includes("good morning") || lowerText.includes("hey") || lowerText.includes("hello")) {
@@ -46,20 +50,12 @@ export async function handleTelegramUpdate(update: any) {
       await postMediumArticle(chatId, command);
       break;
 
-    case "twitter":
-      await postTweet(chatId, command);
-      break;
-
-    case "fb_ad":
-      await createPausedAd(chatId, command);
+    case "facebook":
+      await postFacebookPromo(chatId, command);
       break;
 
     case "quora":
       await draftQuoraAnswers(chatId, command);
-      break;
-
-    case "outreach":
-      await runOutreach(chatId, command);
       break;
 
     case "status":
@@ -68,12 +64,12 @@ export async function handleTelegramUpdate(update: any) {
       break;
 
     default:
-      // Send a helpful message for unknown commands
       await sendTelegram(chatId, 
         `I didn't understand that. Try:\n` +
         `• "create 3 pins, 2 hours apart"\n` +
         `• "post article about Brand DNA"\n` +
-        `• "tweet about my skills"\n` +
+        `• "post to facebook"\n` +
+        `• "quora drafts"\n` +
         `• "good morning"`
       );
   }
