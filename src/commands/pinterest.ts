@@ -1,18 +1,16 @@
 // src/commands/pinterest.ts
 import { getOfferContext } from "../vault.ts";
-import { sendTelegram, sendPhoto } from "../utils/telegram.ts";
+import { sendTelegram } from "../utils/telegram.ts";
 import { generatePinCopy, generateImagePrompt, postPin } from "../utils/apiClients.ts";
+import { getPendingDrafts, setPendingDrafts, addScheduledPost, trackActivity } from "../utils/state.ts";
 
-const kv = await Deno.openKv();
+const CHAT_ID = Deno.env.get("TELEGRAM_CHAT_ID")!;
 
 export async function handlePinterestDraft(chatId: number, command: any) {
-  // Parse count (default 3) and interval (default 2h)
-  const count = 3; // could parse from command
+  const count = 3;
   const intervalHours = 2;
-
   const vault = await getOfferContext("dna");
 
-  // Generate drafts
   const drafts = [];
   for (let i = 0; i < count; i++) {
     const copy = await generatePinCopy(vault);
@@ -27,10 +25,8 @@ export async function handlePinterestDraft(chatId: number, command: any) {
     });
   }
 
-  // Store in KV
-  await kv.set(["pending_drafts"], drafts);
+  await setPendingDrafts(drafts);
 
-  // Send prompts to user
   let message = `📌 Generated ${count} Pinterest drafts:\n\n`;
   drafts.forEach((d, i) => {
     message += `**Pin ${i+1}:**\nTitle: ${d.title}\nDescription: ${d.description}\nPrompt: ${d.prompt}\n\n`;
@@ -41,54 +37,43 @@ export async function handlePinterestDraft(chatId: number, command: any) {
 }
 
 export async function handleImageUpload(chatId: number, photo: any) {
-  // Get the largest photo (file_id)
   const fileId = photo[photo.length - 1].file_id;
-
-  // Fetch pending drafts
-  const pending = await kv.get<Array<any>>(["pending_drafts"]);
-  if (!pending.value || pending.value.length === 0) {
-    await sendTelegram(chatId, "No pending drafts found. Send 'create pins' first.");
-    return;
-  }
-
-  // Find first draft waiting for image
-  const draftIdx = pending.value.findIndex(d => d.status === "waiting_image");
+  const drafts = await getPendingDrafts();
+  const draftIdx = drafts.findIndex(d => d.status === "waiting_image");
+  
   if (draftIdx === -1) {
-    await sendTelegram(chatId, "All drafts already have images assigned.");
+    await sendTelegram(chatId, "No pending drafts waiting for images.");
     return;
   }
 
-  // Assign image to draft
-  pending.value[draftIdx].imageFileId = fileId;
-  pending.value[draftIdx].status = "scheduled";
-  pending.value[draftIdx].scheduledTime = Date.now() + 2 * 60 * 60 * 1000; // 2 hours
+  drafts[draftIdx].imageFileId = fileId;
+  drafts[draftIdx].status = "scheduled";
+  drafts[draftIdx].scheduledTime = Date.now() + 2 * 60 * 60 * 1000;
+  await setPendingDrafts(drafts);
 
-  // Store back
-  await kv.set(["pending_drafts"], pending.value);
-
-  // Schedule posting (we'll use a separate cron that checks scheduled times)
-  // For now, just confirm
-  await sendTelegram(chatId,
-    `✅ Image received for Pin ${draftIdx+1}. It will post at ${new Date(pending.value[draftIdx].scheduledTime).toLocaleString()}.`
-  );
+  await sendTelegram(chatId, `✅ Image received for Pin ${draftIdx+1}. It will post at ${new Date(drafts[draftIdx].scheduledTime).toLocaleString()}.`);
 }
 
-// This cron runs every 10 minutes to check scheduled posts
-Deno.cron("Check scheduled pins", "*/10 * * * *", async () => {
-  const drafts = await kv.get<Array<any>>(["pending_drafts"]);
-  if (!drafts.value) return;
-
+export async function processScheduledPins() {
+  const drafts = await getPendingDrafts();
   const now = Date.now();
   let updated = false;
-  for (const d of drafts.value) {
+  
+  for (const d of drafts) {
     if (d.status === "scheduled" && d.scheduledTime <= now) {
-      // Post the pin
-      await postPin(d.title, d.description, d.imageFileId);
-      d.status = "posted";
-      updated = true;
+      try {
+        await postPin(d.title, d.description, d.imageFileId);
+        d.status = "posted";
+        updated = true;
+        await trackActivity("pinterest", { title: d.title });
+      } catch (error) {
+        console.error(`Failed to post pin ${d.id}:`, error);
+      }
     }
   }
+  
   if (updated) {
-    await kv.set(["pending_drafts"], drafts.value);
+    await setPendingDrafts(drafts);
+    await sendTelegram(CHAT_ID, "✅ One or more Pinterest pins posted.");
   }
-});
+}
