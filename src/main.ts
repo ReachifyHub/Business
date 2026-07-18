@@ -1,13 +1,12 @@
 // src/main.ts
-import { getMyBotContext, getOfferContext } from "./vault.ts";
+import { getMyBotContext } from "./vault.ts";
 import { sendTelegram, parseCommand } from "./utils/telegram.ts";
 import { handlePinterestDraft, handleImageUpload } from "./commands/pinterest.ts";
 import { postMediumArticle } from "./commands/medium.ts";
 import { postFacebookPromo } from "./commands/facebook.ts";
 import { draftQuoraAnswers } from "./commands/quora.ts";
-import { generateAIGreeting } from "./utils/apiClients.ts";
-import { generateAIFallbackReply, generateAIGreeting } from "./utils/apiClients.ts";
 import { postToBlog } from "./commands/wordpress.ts";
+import { generateAIFallbackReply, generateAIGreeting } from "./utils/apiClients.ts";
 import { 
   getUserMemory, 
   updateUserMemory, 
@@ -16,9 +15,6 @@ import {
   getPendingDrafts,
   trackActivity 
 } from "./utils/state.ts";
-
-const BOT_TOKEN = Deno.env.get("TELEGRAM_BOT_TOKEN")!;
-const CHAT_ID = Deno.env.get("TELEGRAM_CHAT_ID")!;
 
 const kv = await Deno.openKv();
 
@@ -85,18 +81,18 @@ export async function handleTelegramUpdate(update: any) {
       case "quora":
         await draftQuoraAnswers(chatId, command);
         break;
+      case "wordpress":
+        await postToBlog(chatId, command);
+        break;
       case "status":
         const status = await getStatus();
         await sendTelegram(chatId, status);
         break;
-      case "wordpress":
-        await postToBlog(chatId, command);
-        break;
       default:
-        // AI-powered fallback for unknown messages
         const ctx = await getMyBotContext();
         const aiReply = await generateAIFallbackReply(text, ctx);
         await sendTelegram(chatId, aiReply);
+        break;
     }
   } catch (error: any) {
     console.error("Error in handleTelegramUpdate:", error);
