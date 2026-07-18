@@ -1,6 +1,46 @@
 // src/utils/state.ts
 const kv = await Deno.openKv();
 
+// ─── User memory ───
+export async function getUserMemory(userId: string) {
+  const result = await kv.get(["user_memory", userId]);
+  return result.value || {};
+}
+
+export async function updateUserMemory(userId: string, updates: any) {
+  const current = await getUserMemory(userId);
+  const updated = { ...current, ...updates, lastUpdated: Date.now() };
+  await kv.set(["user_memory", userId], updated);
+  return updated;
+}
+
+// ─── Activity tracking ───
+export async function trackActivity(type: string, details: any) {
+  const today = new Date().toISOString().slice(0, 10);
+  const key = ["activity", today, type];
+  const result = await kv.get<any[]>(key);
+  const activities = result.value || [];
+  activities.push({ ...details, timestamp: Date.now() });
+  await kv.set(key, activities);
+  
+  const recent = await kv.get<any[]>(["activity", "recent"]);
+  const recentList = recent.value || [];
+  recentList.unshift({ type, details, timestamp: Date.now() });
+  if (recentList.length > 50) recentList.pop();
+  await kv.set(["activity", "recent"], recentList);
+}
+
+export async function getTodayActivities() {
+  const today = new Date().toISOString().slice(0, 10);
+  const result = await kv.get<any[]>(["activity", today]);
+  return result.value || [];
+}
+
+export async function getRecentActivities() {
+  const result = await kv.get<any[]>(["activity", "recent"]);
+  return result.value || [];
+}
+
 // ─── Drafts ───
 export async function getPendingDrafts() {
   const result = await kv.get<Array<any>>(["pending_drafts"]);
@@ -15,6 +55,15 @@ export async function setPendingDrafts(drafts: any[]) {
 export async function getScheduledPosts() {
   const result = await kv.get<Array<any>>(["scheduled_posts"]);
   return result.value || [];
+}
+
+export async function getTodayScheduledPosts() {
+  const posts = await getScheduledPosts();
+  const today = new Date().toISOString().slice(0, 10);
+  return posts.filter(p => {
+    const date = new Date(p.scheduledTime).toISOString().slice(0, 10);
+    return date === today;
+  });
 }
 
 export async function addScheduledPost(post: any) {
