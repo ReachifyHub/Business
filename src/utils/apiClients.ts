@@ -1,8 +1,8 @@
 // src/utils/apiClients.ts
-// ─── Gemini ───
+// ─── Gemini (for longer content like articles) ───
 export async function callGemini(prompt: string): Promise<string> {
   const key = Deno.env.get("GEMINI_API_KEY")!;
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${key}`;
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${key}`; /* 1†L6-L7 */
   const resp = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -16,7 +16,7 @@ export async function callGemini(prompt: string): Promise<string> {
   return data.candidates?.[0]?.content?.parts?.[0]?.text || "";
 }
 
-// ─── Groq ───
+// ─── Groq (for short, fast content like pins, ads, replies) ───
 export async function callGroq(prompt: string): Promise<string> {
   const key = Deno.env.get("GROQ_API_KEY")!;
   const resp = await fetch("https://api.groq.com/openai/v1/chat/completions", {
@@ -26,7 +26,7 @@ export async function callGroq(prompt: string): Promise<string> {
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      model: "openai/gpt-oss-120b",
+      model: "openai/gpt-oss-120b", /* 0†L10 */
       messages: [{ role: "user", content: prompt }],
       max_tokens: 1500,
     }),
@@ -34,6 +34,63 @@ export async function callGroq(prompt: string): Promise<string> {
   if (!resp.ok) throw new Error(`Groq error: ${await resp.text()}`);
   const data = await resp.json();
   return data.choices[0].message.content;
+}
+
+// ─── AI-powered greeting ───
+export async function generateAIGreeting(params: {
+  userName: string;
+  businessName?: string;
+  todayActivities: any[];
+  todayPosts: any[];
+  pendingDrafts: any[];
+  vaultContext: string;
+  timeOfDay: string;
+}): Promise<string> {
+  const prompt = `You are JARVIS, a friendly and professional AI marketing assistant for ${params.userName}.
+
+CONTEXT:
+- User's business: ${params.businessName || "not set yet"}
+- Time of day: ${params.timeOfDay}
+- Today's activities: ${params.todayActivities.length} actions
+- Scheduled posts today: ${params.todayPosts.length}
+- Pending Pinterest drafts: ${params.pendingDrafts.filter(d => d.status === "waiting_image").length}
+
+VAULT CONTEXT (tone, voice, audience):
+${params.vaultContext.slice(0, 2000)}
+
+RULES:
+- Write a warm, personal greeting in the voice of a trusted assistant.
+- Be concise (max 200 words).
+- Mention if there are pending drafts or no activity yet.
+- If business name is set, reference it naturally.
+- Offer 2-3 specific suggestions for what they could do today.
+- Do NOT use exclamation marks excessively. Keep it professional but warm.
+- End with an open question like "What would you like to focus on today?"
+
+OUTPUT ONLY THE GREETING MESSAGE — no extra commentary.`;
+
+  return await callGroq(prompt);
+}
+
+// ─── AI-powered fallback for unknown messages ───
+export async function generateAIFallbackReply(userMessage: string, vaultContext: string): Promise<string> {
+  const prompt = `You are JARVIS, a professional AI marketing assistant.
+
+USER SAID: "${userMessage}"
+
+VAULT CONTEXT (tone, voice, business details):
+${vaultContext.slice(0, 1500)}
+
+RULES:
+- Respond helpfully and professionally.
+- If the user is asking for help, suggest available commands: "create 3 pins", "post article", "post to facebook", "quora drafts", "good morning".
+- If the user is sharing something, acknowledge it and offer assistance.
+- Keep response under 150 words.
+- Match the tone from the vault — plain, specific, no hype.
+
+OUTPUT ONLY YOUR REPLY — no extra commentary.`;
+
+  return await callGroq(prompt);
 }
 
 // ─── Pinterest ───
@@ -53,7 +110,6 @@ export async function generateImagePrompt(title: string) {
 
 export async function postPin(title: string, description: string, imageFileId: string) {
   const token = Deno.env.get("TELEGRAM_BOT_TOKEN")!;
-  // Get image URL from Telegram
   const fileUrl = `https://api.telegram.org/bot${token}/getFile?file_id=${imageFileId}`;
   const fileResp = await fetch(fileUrl);
   if (!fileResp.ok) throw new Error(`Telegram file error: ${await fileResp.text()}`);
@@ -61,13 +117,11 @@ export async function postPin(title: string, description: string, imageFileId: s
   const filePath = fileData.result.file_path;
   const imageUrl = `https://api.telegram.org/file/bot${token}/${filePath}`;
 
-  // Download image
   const imageResp = await fetch(imageUrl);
   if (!imageResp.ok) throw new Error(`Image download error: ${await imageResp.text()}`);
   const imageBuffer = await imageResp.arrayBuffer();
   const base64 = btoa(String.fromCharCode(...new Uint8Array(imageBuffer)));
 
-  // Post to Pinterest
   const accessToken = Deno.env.get("PINTEREST_ACCESS_TOKEN")!;
   const boardId = Deno.env.get("PINTEREST_BOARD_ID")!;
   const resp = await fetch("https://api.pinterest.com/v5/pins", {
@@ -118,7 +172,7 @@ export async function postMediumArticle(title: string, content: string) {
   return resp.json();
 }
 
-// ─── Facebook Page ───
+// ─── Facebook ───
 export async function postToFacebookPage(message: string, link?: string) {
   const accessToken = Deno.env.get("META_ACCESS_TOKEN")!;
   const pageId = Deno.env.get("META_PAGE_ID")!;
