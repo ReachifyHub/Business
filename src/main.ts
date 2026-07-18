@@ -94,6 +94,13 @@ Deno.serve(async (req) => {
   if (url.pathname === "/" && req.method === "GET") {
     return new Response("✅ JARVIS is alive", { status: 200 });
   }
+  // Add this test route for /telegram (GET)
+ if (url.pathname === "/telegram" && req.method === "GET") {
+   return new Response("✅ Telegram webhook endpoint is reachable. Send POST requests here.", { 
+     status: 200,
+     headers: { "Content-Type": "text/plain" }
+   });
+  }
   if (url.pathname === "/telegram" && req.method === "POST") {
     try {
       const update = await req.json();
